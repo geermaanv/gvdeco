@@ -18,6 +18,8 @@ var HEADER_ROW = ["Timestamp", "Fecha", "Dirección", "Barrio", "Lat", "Long", "
 
 var CERT_RANK = { alto: 3, medio: 2, bajo: 1 };
 
+var ANALYSIS_FIELDS = ["material", "estado", "motivo", "anio_edificio", "color_acabado", "herraje", "ref_herreria"];
+
 var VISION_PROMPT = "Analizá esta imagen de una puerta o elemento arquitectónico Art Déco en Buenos Aires. " +
   "Completá los siguientes campos con el valor más probable y un nivel de certeza (alto/medio/bajo): " +
   "Material, Estado, Motivo, Año estimado del edificio, Color/acabado, Herraje, Notas técnicas relevantes " +
@@ -139,7 +141,7 @@ function processAll() {
     group.fileIds.forEach(function (fileId) {
       var blob = downloadPhoto(cfg, fileId);
       var result = analyzeImage(cfg, blob);
-      if (result) analyses.push(result);
+      if (result) analyses.push(resolveLowConfidenceFields(cfg, blob, result));
     });
 
     if (!analyses.length) {
@@ -256,6 +258,7 @@ function analyzeImage(cfg, blob) {
     payload: JSON.stringify({
       model: cfg.openrouterModel,
       max_tokens: 4096,
+      temperature: 0,
       messages: [{
         role: "user",
         content: [
@@ -284,6 +287,59 @@ function analyzeImage(cfg, blob) {
   }
 }
 
+// Ante un campo con certeza "bajo", el modelo mismo avisa que no está seguro:
+// se lo vuelve a preguntar sobre la misma foto y, si sigue en desacuerdo, una
+// tercera vez, para quedarnos con el valor en el que coincidan al menos 2 de 3.
+function resolveLowConfidenceFields(cfg, blob, result) {
+  var uncertain = ANALYSIS_FIELDS.filter(function (k) {
+    var f = result[k];
+    return f && (f.certeza || "").toLowerCase() === "bajo";
+  });
+  if (!uncertain.length) return result;
+
+  var attempts = [result];
+  var second = analyzeImage(cfg, blob);
+  if (second) attempts.push(second);
+
+  var stillDisputed = attempts.length < 2 || uncertain.some(function (k) {
+    return !sameValue(attempts[0][k], attempts[1][k]);
+  });
+  if (stillDisputed && attempts.length === 2) {
+    var third = analyzeImage(cfg, blob);
+    if (third) attempts.push(third);
+  }
+
+  uncertain.forEach(function (k) {
+    var resolved = majorityValue(attempts, k);
+    if (resolved) result[k] = resolved;
+  });
+  return result;
+}
+
+function sameValue(a, b) {
+  if (!a || !b || !a.valor || !b.valor) return false;
+  return a.valor.trim().toLowerCase() === b.valor.trim().toLowerCase();
+}
+
+function majorityValue(attempts, key) {
+  var counts = {};
+  attempts.forEach(function (a) {
+    var f = a[key];
+    if (!f || !f.valor) return;
+    var norm = f.valor.trim().toLowerCase();
+    counts[norm] = counts[norm] || { valor: f.valor.trim(), count: 0 };
+    counts[norm].count++;
+  });
+  var best = null;
+  Object.keys(counts).forEach(function (k) {
+    if (!best || counts[k].count > best.count) best = counts[k];
+  });
+  // Sin consenso de al menos 2 llamados: se deja el valor original, con
+  // certeza "bajo" intacta — no fabricamos confianza que no hay.
+  if (!best || best.count < 2) return null;
+  return { valor: best.valor, certeza: "medio" };
+}
+
 function mergeField(analyses, key) {
   var best = null;
   analyses.forEach(function (a) {
@@ -297,7 +353,7 @@ function mergeField(analyses, key) {
 
 function mergeAnalyses(analyses) {
   var out = {};
-  ["material", "estado", "motivo", "anio_edificio", "color_acabado", "herraje", "ref_herreria"].forEach(function (k) {
+  ANALYSIS_FIELDS.forEach(function (k) {
     out[k] = mergeField(analyses, k);
   });
   var notas = analyses.map(function (a) { return a.notas; }).filter(Boolean);
