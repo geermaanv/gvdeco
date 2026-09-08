@@ -316,7 +316,17 @@ function geocodeAddress(address) {
     muteHttpExceptions: true,
     headers: { "User-Agent": "gvdeco-relevamiento/1.0 (uso personal)" }
   });
-  var data = JSON.parse(res.getContentText());
+  if (res.getResponseCode() !== 200) {
+    Logger.log("Nominatim HTTP " + res.getResponseCode() + ": " + res.getContentText().slice(0, 200));
+    return { lat: "", lng: "", barrio: "" };
+  }
+  var data;
+  try {
+    data = JSON.parse(res.getContentText());
+  } catch (e) {
+    Logger.log("Nominatim: respuesta no es JSON: " + res.getContentText().slice(0, 200));
+    return { lat: "", lng: "", barrio: "" };
+  }
   if (!data.length) return { lat: "", lng: "", barrio: "" };
 
   var addr = data[0].address || {};
