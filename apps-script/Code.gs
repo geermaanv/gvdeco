@@ -67,6 +67,11 @@ function removeTrigger() {
 // ---- entrypoint con heartbeat de falla ----
 
 function run() {
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(5000)) {
+    Logger.log("Ya hay otra ejecución en curso, se omite esta (evita procesar el mismo mensaje dos veces).");
+    return;
+  }
   try {
     processAll();
   } catch (e) {
@@ -77,6 +82,8 @@ function run() {
     } catch (e2) {
       Logger.log("No se pudo mandar la alerta de falla: " + e2.message);
     }
+  } finally {
+    lock.releaseLock();
   }
 }
 
