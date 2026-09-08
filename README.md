@@ -43,9 +43,9 @@ Mandale al bot todas las fotos de una puerta **como álbum** (seleccioná varias
 
 Ya tenés el bot creado (`@geermaanv_bot`). Falta:
 
-1. **Chat ID permitido**: mandale cualquier mensaje al bot desde tu cuenta, después abrí en el navegador:
+1. **Chat ID permitido**: en un chat privado el `chat_id` de Telegram coincide con tu `user_id` y es el mismo sin importar con qué bot hables — si usás otro bot tuyo (ej. depto-bot) ya tenés ese número. Confirmalo igual mandándole cualquier mensaje al bot y abriendo en el navegador:
    `https://api.telegram.org/bot<TU_TOKEN>/getUpdates`
-   y copiá el valor de `message.chat.id` (un número, puede ser negativo si es un grupo). Ese es `TELEGRAM_ALLOWED_CHAT_ID`.
+   copiando el valor de `message.chat.id`. Ese es `TELEGRAM_ALLOWED_CHAT_ID`.
 2. Guardá el token del bot (`TELEGRAM_BOT_TOKEN`) — es el que te dio @BotFather al crearlo, nunca lo compartas en texto plano fuera de los secrets de GitHub.
 
 ### 3. API key de Google Maps (Geocoding)
@@ -100,4 +100,5 @@ O desde GitHub: pestaña **Actions** → "Procesar fotos Déco Porteño" → **R
 - **Confirmación no es instantánea**: el bot contesta recién cuando corre el pipeline (cada 15 min, o al disparar el workflow a mano) — no hay respuesta en el momento de mandar las fotos.
 - **Barrio**: viene del resultado de geocodificación (`sublocality_level_1` / `sublocality` / `neighborhood`), no lo informa Claude Vision.
 - **Reprocesamiento**: si falla el análisis de un grupo de fotos, igual se confirma el update de Telegram (no vuelve a aparecer) — revisá el log del run de Actions si un mensaje no generó fila.
+- **Alerta de falla total**: si el pipeline entero revienta (credenciales vencidas, etc.), manda un mensaje 🔴 a `TELEGRAM_ALLOWED_CHAT_ID` antes de salir con error, para enterarte sin mirar los logs de Actions.
 - **Modelo Claude**: viene con `claude-sonnet-4-6` por defecto — verificalo contra tu cuenta antes de correr en volumen; ajustalo con la variable de Actions `CLAUDE_MODEL` si hace falta.

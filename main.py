@@ -4,6 +4,7 @@ Telegram (bot @geermaanv_bot, fotos con la dirección como descripción)
     → Claude Vision → Geocoding → Google Sheets → confirmación al chat
 """
 
+import os
 import sys
 from datetime import datetime, timezone
 
@@ -73,6 +74,23 @@ def run():
     return inserted
 
 
+def alert_failure(error: Exception):
+    """Heartbeat de falla: avisa por Telegram si el pipeline entero revienta,
+    para enterarte sin tener que mirar los logs de Actions."""
+    chat_id = os.environ.get("TELEGRAM_ALLOWED_CHAT_ID")
+    if not chat_id:
+        return
+    try:
+        send_message(chat_id, f"🔴 El pipeline de Déco Porteño falló: {error}")
+    except Exception as e:
+        print(f"[main] No se pudo mandar la alerta de falla: {e}")
+
+
 if __name__ == "__main__":
-    result = run()
+    try:
+        result = run()
+    except Exception as e:
+        print(f"[main] Error fatal: {e}")
+        alert_failure(e)
+        sys.exit(1)
     sys.exit(0 if result is not None else 1)
