@@ -248,7 +248,7 @@ function analyzeImage(cfg, blob) {
     headers: { "Authorization": "Bearer " + cfg.openrouterKey },
     payload: JSON.stringify({
       model: cfg.openrouterModel,
-      max_tokens: 1024,
+      max_tokens: 4096,
       messages: [{
         role: "user",
         content: [
