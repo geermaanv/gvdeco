@@ -9,7 +9,7 @@ Telegram (bot @geermaanv_bot: fotos + dirección como descripción)
         ↓
   src/telegram_reader.py — lee mensajes nuevos, agrupa álbumes en una ficha
         ↓
-  src/processor.py — Claude Vision analiza cada foto (material, estado, motivo, etc.)
+  src/processor.py — un modelo de visión (vía OpenRouter) analiza cada foto (material, estado, motivo, etc.)
         ↓
   src/geocode.py — geocodifica la dirección (lat/long, barrio)
         ↓
@@ -52,31 +52,40 @@ Ya tenés el bot creado (`@geermaanv_bot`). Falta:
 
 Cloud Console → Credentials → Create credentials → **API key**, con **Geocoding API** habilitada. No hace falta restricción de referrer: la llamada es servidor a servidor.
 
-### 4. API key de Anthropic
+### 4. OpenRouter (en vez de Anthropic directo)
 
-[console.anthropic.com](https://console.anthropic.com) → API Keys → Create Key. Verificá que el modelo configurado (`claude-sonnet-4-6` por defecto, variable `CLAUDE_MODEL`) esté disponible para tu cuenta.
+1. [openrouter.ai](https://openrouter.ai) → Keys → **Create Key**.
+2. En [openrouter.ai/models](https://openrouter.ai/models), filtrá por input **image** y elegí un modelo de visión. No pude chequear el catálogo actual esta sesión (el dominio está bloqueado acá), así que confirmá vos disponibilidad/precio antes de fijarlo — ejemplos históricos con soporte de imagen: `google/gemini-2.5-flash`, `anthropic/claude-sonnet-4.5`, `qwen/qwen2.5-vl-72b-instruct`.
+3. Si vas a reusar la key de OpenRouter que tenías en `depto-bot/tutor_runner.py` (`OPENROUTER_API_KEY = "sk-or-v1-..."`), **rotala primero** en openrouter.ai/keys — quedó expuesta en texto plano en ese repo.
 
 ### 5. Secrets en GitHub
 
-Repo → Settings → Secrets and variables → Actions → New repository secret:
+Repo → Settings → Secrets and variables → Actions:
+
+**Secrets** (New repository secret):
 
 | Secret | Valor |
 |--------|-------|
-| `ANTHROPIC_API_KEY` | API key de Anthropic |
+| `OPENROUTER_API_KEY` | API key de OpenRouter |
 | `MAPS_API_KEY` | API key de Geocoding |
 | `GOOGLE_SPREADSHEET_ID` | `1ImBKT58KqTMcymS36OuX5yblesewgRD3s5wXEeU00HM` |
 | `GOOGLE_SERVICE_ACCOUNT_JSON` | Contenido completo del JSON de la service account |
 | `TELEGRAM_BOT_TOKEN` | Token de `@geermaanv_bot` |
 | `TELEGRAM_ALLOWED_CHAT_ID` | Tu chat ID (paso 2) |
 
-Opcional, en **Variables** (no Secrets) de Actions: `CLAUDE_MODEL` si querés otro modelo distinto del default.
+**Variables** (New repository variable) — no es secreto, pero es obligatorio, no tiene default:
+
+| Variable | Valor |
+|----------|-------|
+| `OPENROUTER_MODEL` | El slug del modelo elegido en el paso 4, ej. `google/gemini-2.5-flash` |
 
 ## Correr manualmente
 
 ```bash
 pip install -r requirements.txt
 
-export ANTHROPIC_API_KEY=...
+export OPENROUTER_API_KEY=...
+export OPENROUTER_MODEL=google/gemini-2.5-flash
 export MAPS_API_KEY=...
 export GOOGLE_SPREADSHEET_ID=1ImBKT58KqTMcymS36OuX5yblesewgRD3s5wXEeU00HM
 export GOOGLE_SERVICE_ACCOUNT_JSON='{"type":"service_account",...}'
@@ -92,13 +101,13 @@ O desde GitHub: pestaña **Actions** → "Procesar fotos Déco Porteño" → **R
 
 `Fecha | Dirección | Barrio | Lat | Long | Material | Estado | Motivo | Año edif. | Color/acabado | Herraje | Ref. herrería | Certeza | Notas | Origen (Telegram)`
 
-`Certeza` es un promedio simple de la certeza (alto/medio/bajo) que informa Claude Vision por campo; si hay varias fotos, cada campo toma el valor con mayor certeza entre todas.
+`Certeza` es un promedio simple de la certeza (alto/medio/bajo) que informa el modelo por campo; si hay varias fotos, cada campo toma el valor con mayor certeza entre todas.
 
 ## Notas técnicas
 
-- **Fotos vía "foto" de Telegram** (no como archivo/documento): Telegram las recomprime a JPEG, suficiente para el análisis de Claude Vision pero no es la imagen original sin comprimir.
+- **Fotos vía "foto" de Telegram** (no como archivo/documento): Telegram las recomprime a JPEG, suficiente para el análisis pero no es la imagen original sin comprimir.
 - **Confirmación no es instantánea**: el bot contesta recién cuando corre el pipeline (cada 15 min, o al disparar el workflow a mano) — no hay respuesta en el momento de mandar las fotos.
-- **Barrio**: viene del resultado de geocodificación (`sublocality_level_1` / `sublocality` / `neighborhood`), no lo informa Claude Vision.
+- **Barrio**: viene del resultado de geocodificación (`sublocality_level_1` / `sublocality` / `neighborhood`), no lo informa el modelo de visión.
 - **Reprocesamiento**: si falla el análisis de un grupo de fotos, igual se confirma el update de Telegram (no vuelve a aparecer) — revisá el log del run de Actions si un mensaje no generó fila.
 - **Alerta de falla total**: si el pipeline entero revienta (credenciales vencidas, etc.), manda un mensaje 🔴 a `TELEGRAM_ALLOWED_CHAT_ID` antes de salir con error, para enterarte sin mirar los logs de Actions.
-- **Modelo Claude**: viene con `claude-sonnet-4-6` por defecto — verificalo contra tu cuenta antes de correr en volumen; ajustalo con la variable de Actions `CLAUDE_MODEL` si hace falta.
+- **Calidad del modelo**: no todos los modelos de OpenRouter siguen instrucciones de JSON estricto igual de bien — si ves errores de parseo en los logs (`[processor] Error JSON`), probá con otro modelo en `OPENROUTER_MODEL`.

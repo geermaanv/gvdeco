@@ -1,7 +1,7 @@
 """
 main.py — Déco Porteño pipeline
 Telegram (bot @geermaanv_bot, fotos con la dirección como descripción)
-    → Claude Vision → Geocoding → Google Sheets → confirmación al chat
+    → modelo de visión (OpenRouter) → Geocoding → Google Sheets → confirmación al chat
 """
 
 import os

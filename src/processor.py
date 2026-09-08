@@ -1,16 +1,21 @@
 """
 processor.py
-Envía cada foto a Claude Vision y extrae los campos técnicos de herrería
-con el schema exacto del Google Sheet de Déco Porteño.
+Envía cada foto a un modelo de visión vía OpenRouter y extrae los campos
+técnicos de herrería con el schema exacto del Google Sheet de Déco Porteño.
+
+OpenRouter expone un endpoint compatible con el formato de OpenAI
+(chat/completions + image_url en base64), así que no hace falta el SDK de
+ningún proveedor puntual — un solo POST con `requests` alcanza.
 """
 
 import os
 import json
 import base64
-import anthropic
+import requests
 
-client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
-MODEL = os.environ.get("CLAUDE_MODEL", "claude-sonnet-4-6")
+OPENROUTER_API_KEY = os.environ["OPENROUTER_API_KEY"]
+MODEL = os.environ["OPENROUTER_MODEL"]  # ej: "google/gemini-2.5-flash" — ver openrouter.ai/models (filtrar por input "image")
+OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 
 CERT_RANK = {"alto": 3, "medio": 2, "bajo": 1}
 
@@ -37,18 +42,28 @@ def analyze_image(image_bytes: bytes, media_type: str) -> dict | None:
     raw = ""
     try:
         b64 = base64.standard_b64encode(image_bytes).decode("utf-8")
-        response = client.messages.create(
-            model=MODEL,
-            max_tokens=1024,
-            messages=[{
-                "role": "user",
-                "content": [
-                    {"type": "image", "source": {"type": "base64", "media_type": media_type, "data": b64}},
-                    {"type": "text", "text": VISION_PROMPT},
-                ],
-            }],
+        resp = requests.post(
+            OPENROUTER_URL,
+            headers={
+                "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "model": MODEL,
+                "max_tokens": 1024,
+                "messages": [{
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": VISION_PROMPT},
+                        {"type": "image_url", "image_url": {"url": f"data:{media_type};base64,{b64}"}},
+                    ],
+                }],
+            },
+            timeout=60,
         )
-        raw = response.content[0].text.strip()
+        resp.raise_for_status()
+        data = resp.json()
+        raw = data["choices"][0]["message"]["content"].strip()
         raw = raw.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
         return json.loads(raw)
     except json.JSONDecodeError as e:
