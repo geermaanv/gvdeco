@@ -1,20 +1,13 @@
 """
 main.py — Déco Porteño pipeline
-Gmail (asunto "gvdeco" + fotos adjuntas + dirección en el cuerpo)
-    → Claude Vision → Geocoding → Google Sheets → etiqueta "gvdeco-procesado"
+Telegram (bot @geermaanv_bot, fotos con la dirección como descripción)
+    → Claude Vision → Geocoding → Google Sheets → confirmación al chat
 """
 
 import sys
+from datetime import datetime, timezone
 
-from src.gmail_reader import (
-    get_service as gmail_service,
-    ensure_label,
-    fetch_new_messages,
-    get_message,
-    get_attachment_bytes,
-    extract_message,
-    mark_processed,
-)
+from src.telegram_reader import fetch_new_groups, acknowledge, download_photo, send_message
 from src.processor import analyze_image, merge_analyses, overall_certainty
 from src.geocode import geocode_address
 from src.sheets import get_service as sheets_service, ensure_header, append_row
@@ -23,53 +16,57 @@ from src.sheets import get_service as sheets_service, ensure_header, append_row
 def run():
     print("=== Déco Porteño — pipeline ===\n")
 
-    gmail = gmail_service()
-    label_id = ensure_label(gmail)
     sheets = sheets_service()
     ensure_header(sheets)
 
-    messages = fetch_new_messages(gmail)
-    print(f"[1/2] {len(messages)} email(s) nuevo(s)\n")
-    if not messages:
-        print("Sin emails nuevos. Pipeline finalizado.")
+    groups, last_update_id = fetch_new_groups()
+    print(f"[1/2] {len(groups)} ficha(s) nueva(s)\n")
+    if not groups:
+        print("Sin mensajes nuevos. Pipeline finalizado.")
         return 0
 
     inserted = 0
-    for meta in messages:
-        parsed = extract_message(get_message(gmail, meta["id"]))
-
-        if not parsed["address"]:
-            print(f"[main] {parsed['id']}: sin dirección en el cuerpo, se omite")
-            continue
-        if not parsed["images"]:
-            print(f"[main] {parsed['id']}: sin fotos adjuntas, se omite")
+    for group in groups:
+        if not group["address"]:
+            print(f"[main] chat {group['chat_id']}: sin dirección (descripción) en las fotos, se omite")
+            send_message(group["chat_id"], "⚠️ No encontré la dirección — mandá las fotos con la dirección como descripción (caption) del mensaje.")
             continue
 
         analyses = []
-        for img in parsed["images"]:
-            data = get_attachment_bytes(gmail, parsed["id"], img["attachmentId"])
-            result = analyze_image(data, img["mimeType"])
+        for file_id in group["file_ids"]:
+            data = download_photo(file_id)
+            result = analyze_image(data, "image/jpeg")
             if result:
                 analyses.append(result)
 
         if not analyses:
-            print(f"[main] {parsed['id']}: Claude Vision no devolvió resultados válidos, se omite")
+            print(f"[main] {group['address']}: Claude Vision no devolvió resultados válidos, se omite")
+            send_message(group["chat_id"], f"⚠️ No pude analizar las fotos de «{group['address']}». Probá de nuevo.")
             continue
 
         merged = merge_analyses(analyses)
-        geo = geocode_address(parsed["address"])
+        geo = geocode_address(group["address"])
+        fecha = datetime.fromtimestamp(group["date"], tz=timezone.utc).date().isoformat()
 
         row = [
-            parsed["fecha"], parsed["address"], geo["barrio"], geo["lat"], geo["lng"],
+            fecha, group["address"], geo["barrio"], geo["lat"], geo["lng"],
             merged["material"]["valor"], merged["estado"]["valor"], merged["motivo"]["valor"],
             merged["anio_edificio"]["valor"], merged["color_acabado"]["valor"], merged["herraje"]["valor"],
-            merged["ref_herreria"]["valor"], overall_certainty(merged), merged["notas"], parsed["from"],
+            merged["ref_herreria"]["valor"], overall_certainty(merged), merged["notas"], group["from"],
         ]
 
         append_row(sheets, row)
-        mark_processed(gmail, parsed["id"], label_id)
         inserted += 1
-        print(f"[main] ✓ {parsed['address']} — fila agregada")
+        print(f"[main] ✓ {group['address']} — fila agregada")
+        send_message(
+            group["chat_id"],
+            f"✅ Ficha creada: {group['address']}\n"
+            f"Material: {merged['material']['valor']} · Estado: {merged['estado']['valor']} · "
+            f"Herraje: {merged['herraje']['valor']} · Certeza: {overall_certainty(merged)}",
+        )
+
+    if last_update_id is not None:
+        acknowledge(last_update_id)
 
     print(f"\n[2/2] {inserted} fila(s) nueva(s) en el Sheet")
     print("=== Pipeline completado ===")

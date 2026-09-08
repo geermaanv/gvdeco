@@ -16,7 +16,7 @@ SPREADSHEET_ID = os.environ.get("GOOGLE_SPREADSHEET_ID", "1ImBKT58KqTMcymS36OuX5
 
 HEADER = [
     "Fecha", "Dirección", "Barrio", "Lat", "Long", "Material", "Estado", "Motivo",
-    "Año edif.", "Color/acabado", "Herraje", "Ref. herrería", "Certeza", "Notas", "Email origen",
+    "Año edif.", "Color/acabado", "Herraje", "Ref. herrería", "Certeza", "Notas", "Origen (Telegram)",
 ]
 
 _sheet_title_cache = None

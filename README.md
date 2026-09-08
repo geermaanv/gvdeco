@@ -5,9 +5,9 @@ Relevamiento fotográfico de puertas y herrería Art Déco/racionalista en CABA.
 ## Arquitectura
 
 ```
-Gmail (asunto "gvdeco" + fotos + dirección en el cuerpo)
+Telegram (bot @geermaanv_bot: fotos + dirección como descripción)
         ↓
-  src/gmail_reader.py — busca emails nuevos, extrae dirección y fotos
+  src/telegram_reader.py — lee mensajes nuevos, agrupa álbumes en una ficha
         ↓
   src/processor.py — Claude Vision analiza cada foto (material, estado, motivo, etc.)
         ↓
@@ -15,50 +15,48 @@ Gmail (asunto "gvdeco" + fotos + dirección en el cuerpo)
         ↓
   src/sheets.py — escribe la fila en Google Sheets
         ↓
-  Gmail — se marca el email con la etiqueta "gvdeco-procesado"
+  Telegram — el bot te contesta con la ficha creada (o el motivo si falló)
 ```
 
 Corre cada 15 minutos vía GitHub Actions — gratis.
 
-### Por qué no es igual a hayminga-pipeline en la autenticación
+### Por qué Telegram en vez de Gmail
 
-hayminga-pipeline solo necesita escribir en Sheets, así que un **service account** alcanza: se comparte la hoja con su email y listo, sin login de usuario. Acá además hace falta **leer tu Gmail personal**, y eso Google no lo permite con un service account solo (se necesita delegación de dominio de Google Workspace, que no existe en una cuenta @gmail.com común). Por eso Gmail usa un **refresh token de OAuth de usuario** generado una sola vez a mano — corre desatendido en cada ejecución igual que el resto, pero el paso inicial no se puede evitar.
+Un bot de Telegram no necesita OAuth: alcanza con el token que te da @BotFather. Además, Telegram lleva registro de qué mensajes ya confirmaste leer (`offset` en `getUpdates`) — no hace falta ningún label ni archivo propio para saber qué está procesado, como sí hacía falta con Gmail. Sheets sigue usando **service account**, igual que hayminga.
 
-Sheets sigue usando service account, igual que hayminga.
+**Importante — control de acceso**: cualquiera que le escriba a `@geermaanv_bot` puede mandar fotos si no se restringe. El pipeline sólo procesa mensajes de tu `TELEGRAM_ALLOWED_CHAT_ID` (ver paso 2); todo lo demás se ignora.
+
+## Uso
+
+Mandale al bot todas las fotos de una puerta **como álbum** (seleccioná varias imágenes juntas antes de enviar) y escribí la dirección como **descripción** del álbum. Si mandás una sola foto, la descripción de esa foto es la dirección. El bot te contesta en el mismo chat cuando la próxima corrida (cada 15 min, o manual) la procesa.
 
 ## Setup (una sola vez)
 
-### 1. Google Sheets
+### 1. Google Sheets + service account (para escribir)
 
-El Sheet ya existe: `1ImBKT58KqTMcymS36OuX5yblesewgRD3s5wXEeU00HM` ("Déco Porteño"), vacío. El pipeline crea la fila de encabezados solo, en la primera corrida.
-
-### 2. Service account (para Sheets)
-
-1. [Google Cloud Console](https://console.cloud.google.com) → creá un proyecto (ej. "gvdeco").
-2. Activá **Google Sheets API** y **Geocoding API**.
+1. El Sheet ya existe: `1ImBKT58KqTMcymS36OuX5yblesewgRD3s5wXEeU00HM` ("Déco Porteño"), vacío. El pipeline crea la fila de encabezados solo.
+2. [Google Cloud Console](https://console.cloud.google.com) → creá un proyecto → activá **Google Sheets API** y **Geocoding API**.
 3. Credentials → Create credentials → **Service account** → descargá el JSON de la clave.
-4. Compartí el Google Sheet con el email de la service account (`...@...iam.gserviceaccount.com`), permiso Editor.
+4. Compartí el Sheet con el email de la service account (`...@...iam.gserviceaccount.com`), permiso Editor.
 
-### 3. OAuth de usuario (para Gmail)
+### 2. Telegram
 
-1. En el mismo proyecto de Cloud Console → Credentials → Create credentials → OAuth client ID → tipo **Desktop app**. Descargalo como `client_secret.json`.
-2. OAuth consent screen: agregá el scope `https://www.googleapis.com/auth/gmail.modify` y, si la app queda en modo "Testing", agregate como test user con tu propia cuenta de Gmail.
-3. En tu máquina (no en GitHub Actions):
-   ```bash
-   pip install google-auth-oauthlib
-   python scripts/get_gmail_refresh_token.py
-   ```
-   Se abre un navegador para el consentimiento y el script imprime `GMAIL_CLIENT_ID`, `GMAIL_CLIENT_SECRET` y `GMAIL_REFRESH_TOKEN`. Borrá `client_secret.json` después — ya no hace falta.
+Ya tenés el bot creado (`@geermaanv_bot`). Falta:
 
-### 4. API key de Google Maps (Geocoding)
+1. **Chat ID permitido**: mandale cualquier mensaje al bot desde tu cuenta, después abrí en el navegador:
+   `https://api.telegram.org/bot<TU_TOKEN>/getUpdates`
+   y copiá el valor de `message.chat.id` (un número, puede ser negativo si es un grupo). Ese es `TELEGRAM_ALLOWED_CHAT_ID`.
+2. Guardá el token del bot (`TELEGRAM_BOT_TOKEN`) — es el que te dio @BotFather al crearlo, nunca lo compartas en texto plano fuera de los secrets de GitHub.
 
-Credentials → Create credentials → **API key**, con **Geocoding API** habilitada. Restringila por API (no hace falta restricción de referrer: la llamada es servidor a servidor).
+### 3. API key de Google Maps (Geocoding)
 
-### 5. API key de Anthropic
+Cloud Console → Credentials → Create credentials → **API key**, con **Geocoding API** habilitada. No hace falta restricción de referrer: la llamada es servidor a servidor.
+
+### 4. API key de Anthropic
 
 [console.anthropic.com](https://console.anthropic.com) → API Keys → Create Key. Verificá que el modelo configurado (`claude-sonnet-4-6` por defecto, variable `CLAUDE_MODEL`) esté disponible para tu cuenta.
 
-### 6. Secrets en GitHub
+### 5. Secrets en GitHub
 
 Repo → Settings → Secrets and variables → Actions → New repository secret:
 
@@ -68,9 +66,8 @@ Repo → Settings → Secrets and variables → Actions → New repository secre
 | `MAPS_API_KEY` | API key de Geocoding |
 | `GOOGLE_SPREADSHEET_ID` | `1ImBKT58KqTMcymS36OuX5yblesewgRD3s5wXEeU00HM` |
 | `GOOGLE_SERVICE_ACCOUNT_JSON` | Contenido completo del JSON de la service account |
-| `GMAIL_CLIENT_ID` | Del paso 3 |
-| `GMAIL_CLIENT_SECRET` | Del paso 3 |
-| `GMAIL_REFRESH_TOKEN` | Del paso 3 |
+| `TELEGRAM_BOT_TOKEN` | Token de `@geermaanv_bot` |
+| `TELEGRAM_ALLOWED_CHAT_ID` | Tu chat ID (paso 2) |
 
 Opcional, en **Variables** (no Secrets) de Actions: `CLAUDE_MODEL` si querés otro modelo distinto del default.
 
@@ -83,24 +80,24 @@ export ANTHROPIC_API_KEY=...
 export MAPS_API_KEY=...
 export GOOGLE_SPREADSHEET_ID=1ImBKT58KqTMcymS36OuX5yblesewgRD3s5wXEeU00HM
 export GOOGLE_SERVICE_ACCOUNT_JSON='{"type":"service_account",...}'
-export GMAIL_CLIENT_ID=...
-export GMAIL_CLIENT_SECRET=...
-export GMAIL_REFRESH_TOKEN=...
+export TELEGRAM_BOT_TOKEN=...
+export TELEGRAM_ALLOWED_CHAT_ID=...
 
 python main.py
 ```
 
-O desde GitHub: pestaña **Actions** → "Procesar emails Déco Porteño" → **Run workflow**.
+O desde GitHub: pestaña **Actions** → "Procesar fotos Déco Porteño" → **Run workflow**.
 
 ## Columnas del Sheet
 
-`Fecha | Dirección | Barrio | Lat | Long | Material | Estado | Motivo | Año edif. | Color/acabado | Herraje | Ref. herrería | Certeza | Notas | Email origen`
+`Fecha | Dirección | Barrio | Lat | Long | Material | Estado | Motivo | Año edif. | Color/acabado | Herraje | Ref. herrería | Certeza | Notas | Origen (Telegram)`
 
-`Certeza` es un promedio simple de la certeza (alto/medio/bajo) que informa Claude Vision por campo; si el email tiene varias fotos, cada campo toma el valor con mayor certeza entre todas.
+`Certeza` es un promedio simple de la certeza (alto/medio/bajo) que informa Claude Vision por campo; si hay varias fotos, cada campo toma el valor con mayor certeza entre todas.
 
 ## Notas técnicas
 
-- **Dirección**: se toma la primera línea no vacía del cuerpo del email.
+- **Fotos vía "foto" de Telegram** (no como archivo/documento): Telegram las recomprime a JPEG, suficiente para el análisis de Claude Vision pero no es la imagen original sin comprimir.
+- **Confirmación no es instantánea**: el bot contesta recién cuando corre el pipeline (cada 15 min, o al disparar el workflow a mano) — no hay respuesta en el momento de mandar las fotos.
 - **Barrio**: viene del resultado de geocodificación (`sublocality_level_1` / `sublocality` / `neighborhood`), no lo informa Claude Vision.
-- **Reprocesamiento**: si un email falla (sin fotos, sin dirección, error de red o de la API), no se marca como procesado y se reintenta en la próxima corrida.
+- **Reprocesamiento**: si falla el análisis de un grupo de fotos, igual se confirma el update de Telegram (no vuelve a aparecer) — revisá el log del run de Actions si un mensaje no generó fila.
 - **Modelo Claude**: viene con `claude-sonnet-4-6` por defecto — verificalo contra tu cuenta antes de correr en volumen; ajustalo con la variable de Actions `CLAUDE_MODEL` si hace falta.
