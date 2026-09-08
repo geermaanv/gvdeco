@@ -1,55 +1,106 @@
 # Déco Porteño
 
-Relevamiento fotográfico de puertas y herrería Art Déco/racionalista en CABA. `index.html` es una app estática de una sola página (sin backend) que lee emails de Gmail, analiza las fotos adjuntas con Claude Vision, geocodifica la dirección y escribe una fila en Google Sheets.
+Relevamiento fotográfico de puertas y herrería Art Déco/racionalista en CABA. Pipeline en Python, mismo patrón que [hayminga-pipeline](https://github.com/geermaanv/hayminga-pipeline): corre por cron en GitHub Actions, sin servidor propio.
 
-## Flujo
+## Arquitectura
 
-1. El usuario manda un email con `gvdeco` en el asunto, fotos adjuntas y la dirección en el cuerpo.
-2. La app busca en Gmail: `subject:gvdeco -label:gvdeco-procesado has:attachment`.
-3. Por cada email: descarga las fotos, las manda a Claude Vision, geocodifica la dirección con la Geocoding de Google y combina los resultados (si hay varias fotos, se toma por campo el valor con mayor certeza).
-4. Agrega una fila a la hoja de Sheets configurada.
-5. Marca el email con la etiqueta Gmail `gvdeco-procesado` para no reprocesarlo.
+```
+Gmail (asunto "gvdeco" + fotos + dirección en el cuerpo)
+        ↓
+  src/gmail_reader.py — busca emails nuevos, extrae dirección y fotos
+        ↓
+  src/processor.py — Claude Vision analiza cada foto (material, estado, motivo, etc.)
+        ↓
+  src/geocode.py — geocodifica la dirección (lat/long, barrio)
+        ↓
+  src/sheets.py — escribe la fila en Google Sheets
+        ↓
+  Gmail — se marca el email con la etiqueta "gvdeco-procesado"
+```
 
-Todas las llamadas (Gmail, Sheets, Geocoding, Anthropic) se hacen directamente desde el navegador — no hay servidor propio.
+Corre cada 15 minutos vía GitHub Actions — gratis.
 
-## Puesta en marcha
+### Por qué no es igual a hayminga-pipeline en la autenticación
 
-### 1. Crear el Client ID de OAuth (Google Cloud Console)
+hayminga-pipeline solo necesita escribir en Sheets, así que un **service account** alcanza: se comparte la hoja con su email y listo, sin login de usuario. Acá además hace falta **leer tu Gmail personal**, y eso Google no lo permite con un service account solo (se necesita delegación de dominio de Google Workspace, que no existe en una cuenta @gmail.com común). Por eso Gmail usa un **refresh token de OAuth de usuario** generado una sola vez a mano — corre desatendido en cada ejecución igual que el resto, pero el paso inicial no se puede evitar.
 
-1. https://console.cloud.google.com/apis/credentials → **Create credentials → OAuth client ID**.
-2. Tipo de aplicación: **Web application**.
-3. En **Authorized JavaScript origins** agregá el origen exacto donde vas a servir `index.html` (por ejemplo `https://tuusuario.github.io` o la URL del Artifact de Claude que publiques). No hace falta *redirect URI* porque se usa el flujo de token implícito de Google Identity Services.
-4. Habilitá estas APIs en el proyecto: **Gmail API**, **Google Sheets API**, **Geocoding API** y **Maps JavaScript API** (la geocodificación se hace con `google.maps.Geocoder`, no contra el endpoint REST — el endpoint REST de Geocoding no habilita CORS para llamadas directas desde el navegador, así que se carga la Maps JavaScript API con la misma key).
-5. En la pantalla de consentimiento OAuth agregá los scopes:
-   - `https://www.googleapis.com/auth/gmail.readonly`
-   - `https://www.googleapis.com/auth/gmail.modify`
-   - `https://www.googleapis.com/auth/spreadsheets`
+Sheets sigue usando service account, igual que hayminga.
 
-### 2. Claves necesarias (se guardan en `localStorage` del navegador, nunca se commitean)
+## Setup (una sola vez)
 
-- **Google OAuth Client ID** (paso anterior).
-- **Anthropic API key** — se usa para llamar a `POST https://api.anthropic.com/v1/messages` directamente desde el navegador con la cabecera `anthropic-dangerous-direct-browser-access: true`.
-- **Google Maps API key** — misma key que habilitaste para Geocoding + Maps JavaScript API.
-- **Sheet ID** — ya viene precargado: `1ImBKT58KqTMcymS36OuX5yblesewgRD3s5wXEeU00HM` ("Déco Porteño").
+### 1. Google Sheets
 
-### 3. Uso
+El Sheet ya existe: `1ImBKT58KqTMcymS36OuX5yblesewgRD3s5wXEeU00HM` ("Déco Porteño"), vacío. El pipeline crea la fila de encabezados solo, en la primera corrida.
 
-1. Abrí `index.html` desde el origen que autorizaste (GitHub Pages, un Artifact publicado, o cualquier hosting estático — **no sirve abrirlo como `file://`**, Google OAuth lo rechaza). Versión publicada como Artifact de Claude (mismo código, sin el wrapper `<html>/<head>/<body>` que exige la plataforma): https://claude.ai/code/artifact/c7933d31-4302-4903-91ea-1444135fcd78 — el origen a agregar en **Authorized JavaScript origins** es `https://claude.ai`.
-2. Completá la configuración y **Guardar configuración**.
-3. **Conectar con Google** (pop-up de consentimiento).
-4. **Crear fila de encabezados** la primera vez (no hace nada si la hoja ya tiene encabezados).
-5. **Buscar y procesar emails**.
+### 2. Service account (para Sheets)
+
+1. [Google Cloud Console](https://console.cloud.google.com) → creá un proyecto (ej. "gvdeco").
+2. Activá **Google Sheets API** y **Geocoding API**.
+3. Credentials → Create credentials → **Service account** → descargá el JSON de la clave.
+4. Compartí el Google Sheet con el email de la service account (`...@...iam.gserviceaccount.com`), permiso Editor.
+
+### 3. OAuth de usuario (para Gmail)
+
+1. En el mismo proyecto de Cloud Console → Credentials → Create credentials → OAuth client ID → tipo **Desktop app**. Descargalo como `client_secret.json`.
+2. OAuth consent screen: agregá el scope `https://www.googleapis.com/auth/gmail.modify` y, si la app queda en modo "Testing", agregate como test user con tu propia cuenta de Gmail.
+3. En tu máquina (no en GitHub Actions):
+   ```bash
+   pip install google-auth-oauthlib
+   python scripts/get_gmail_refresh_token.py
+   ```
+   Se abre un navegador para el consentimiento y el script imprime `GMAIL_CLIENT_ID`, `GMAIL_CLIENT_SECRET` y `GMAIL_REFRESH_TOKEN`. Borrá `client_secret.json` después — ya no hace falta.
+
+### 4. API key de Google Maps (Geocoding)
+
+Credentials → Create credentials → **API key**, con **Geocoding API** habilitada. Restringila por API (no hace falta restricción de referrer: la llamada es servidor a servidor).
+
+### 5. API key de Anthropic
+
+[console.anthropic.com](https://console.anthropic.com) → API Keys → Create Key. Verificá que el modelo configurado (`claude-sonnet-4-6` por defecto, variable `CLAUDE_MODEL`) esté disponible para tu cuenta.
+
+### 6. Secrets en GitHub
+
+Repo → Settings → Secrets and variables → Actions → New repository secret:
+
+| Secret | Valor |
+|--------|-------|
+| `ANTHROPIC_API_KEY` | API key de Anthropic |
+| `MAPS_API_KEY` | API key de Geocoding |
+| `GOOGLE_SPREADSHEET_ID` | `1ImBKT58KqTMcymS36OuX5yblesewgRD3s5wXEeU00HM` |
+| `GOOGLE_SERVICE_ACCOUNT_JSON` | Contenido completo del JSON de la service account |
+| `GMAIL_CLIENT_ID` | Del paso 3 |
+| `GMAIL_CLIENT_SECRET` | Del paso 3 |
+| `GMAIL_REFRESH_TOKEN` | Del paso 3 |
+
+Opcional, en **Variables** (no Secrets) de Actions: `CLAUDE_MODEL` si querés otro modelo distinto del default.
+
+## Correr manualmente
+
+```bash
+pip install -r requirements.txt
+
+export ANTHROPIC_API_KEY=...
+export MAPS_API_KEY=...
+export GOOGLE_SPREADSHEET_ID=1ImBKT58KqTMcymS36OuX5yblesewgRD3s5wXEeU00HM
+export GOOGLE_SERVICE_ACCOUNT_JSON='{"type":"service_account",...}'
+export GMAIL_CLIENT_ID=...
+export GMAIL_CLIENT_SECRET=...
+export GMAIL_REFRESH_TOKEN=...
+
+python main.py
+```
+
+O desde GitHub: pestaña **Actions** → "Procesar emails Déco Porteño" → **Run workflow**.
 
 ## Columnas del Sheet
 
 `Fecha | Dirección | Barrio | Lat | Long | Material | Estado | Motivo | Año edif. | Color/acabado | Herraje | Ref. herrería | Certeza | Notas | Email origen`
 
-`Certeza` es un promedio simple de la certeza (alto/medio/bajo) informada por Claude Vision para los campos analizados; cada campo individual también expone su propia certeza en el JSON devuelto por el modelo (visible en la tabla de la app).
+`Certeza` es un promedio simple de la certeza (alto/medio/bajo) que informa Claude Vision por campo; si el email tiene varias fotos, cada campo toma el valor con mayor certeza entre todas.
 
-## Notas técnicas / riesgos conocidos
+## Notas técnicas
 
-- **Exposición de claves**: al ser una app 100% client-side, la Anthropic API key y la Maps API key quedan visibles en el navegador (localStorage + Network tab). Pensada para uso personal en un origen no público. Restringí la Maps API key por HTTP referrer en Cloud Console.
-- **Modelo Claude**: el campo "Modelo Claude" viene precargado con `claude-sonnet-4-6` tal como se especificó. Verificá que ese identificador esté disponible para tu API key antes de procesar en volumen — si la API devuelve error de modelo inválido, ajustá el campo en la UI (se guarda en `localStorage`).
-- **Dirección**: se toma la primera línea no vacía del cuerpo del email como dirección a geocodificar y como valor de la columna "Dirección".
-- **Barrio**: se extrae del resultado de geocodificación (`sublocality_level_1` / `sublocality` / `neighborhood`), no lo informa Claude Vision.
-- **Reprocesamiento**: si un email falla (sin fotos, sin dirección, error de red), no se marca como procesado y va a reaparecer en la próxima búsqueda.
+- **Dirección**: se toma la primera línea no vacía del cuerpo del email.
+- **Barrio**: viene del resultado de geocodificación (`sublocality_level_1` / `sublocality` / `neighborhood`), no lo informa Claude Vision.
+- **Reprocesamiento**: si un email falla (sin fotos, sin dirección, error de red o de la API), no se marca como procesado y se reintenta en la próxima corrida.
+- **Modelo Claude**: viene con `claude-sonnet-4-6` por defecto — verificalo contra tu cuenta antes de correr en volumen; ajustalo con la variable de Actions `CLAUDE_MODEL` si hace falta.
