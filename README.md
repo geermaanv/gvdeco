@@ -2,36 +2,73 @@
 
 Relevamiento fotográfico de puertas y herrería Art Déco/racionalista en CABA, usado como referencia técnica para fabricación en herrería.
 
-## Cómo funciona
-
-No hay pipeline ni infraestructura propia: sacar la foto es manual, y cargarla también empieza como una conversación normal con Claude.
-
-1. Sacás la foto de la puerta/elemento (manual, en el momento).
-2. En una conversación con Claude, compartís la(s) foto(s) junto con la dirección.
-3. Claude analiza las fotos, geocodifica la dirección (Nominatim/OpenStreetMap, sin API key) y manda la ficha directo a un **Google Form** vinculado al Sheet — la fila aparece sola, sin que copies nada a mano.
+## Arquitectura
 
 ```
-Fotos + dirección (chat con Claude)
+Telegram (bot @geermaanv_bot: fotos + dirección como descripción)
         ↓
-  Claude analiza las fotos y geocodifica
+  Code.gs — lee mensajes nuevos, agrupa álbumes en una ficha
         ↓
-  POST al Google Form (sin auth, sin service account)
+  OpenRouter — un modelo de visión analiza cada foto (material, estado, motivo, etc.)
         ↓
-  Google Sheets — pestaña de respuestas del Form
+  Nominatim (OpenStreetMap) — geocodifica la dirección, sin API key
+        ↓
+  Google Sheets — escribe la fila
+        ↓
+  Telegram — el bot te contesta con la ficha creada (o el motivo si falló)
 ```
 
-## Por qué este approach y no un pipeline automático
+Todo corre como **Google Apps Script atado al Sheet**: sin repo desplegado, sin Cloud Console, sin service account, sin secrets de GitHub. Se autoriza una sola vez desde el editor de Apps Script y después corre solo con un trigger de tiempo, cada 10 minutos.
 
-Se evaluaron antes: un artifact HTML con OAuth de Google, un Google Apps Script, y un pipeline en Python corriendo por cron en GitHub Actions (Gmail o Telegram como entrada, Sheets vía service account, Claude Vision u OpenRouter para el análisis). Todos funcionan, pero exigen crear y mantener credenciales (OAuth client, service account, API keys, secrets) para un volumen de uso bajo y esporádico. Un Google Form vinculado al Sheet acepta envíos sin autenticación (es la función para la que existe), así que resuelve la única parte que hacía falta automatizar — cargar la fila — sin ninguna de esas credenciales.
+## Por qué esta versión y no las anteriores
 
-## Sheet
+Se evaluaron antes: un artifact HTML con OAuth de usuario, un pipeline en Python por cron en GitHub Actions (con Gmail o Telegram, service account de Sheets, y Anthropic o OpenRouter para el análisis), y un flujo 100% manual vía Google Form. Apps Script es el punto medio: nada de infraestructura ni credenciales de Cloud Console que mantener (como el pipeline de Python), pero tampoco requiere tocar nada a mano por cada foto (como el Form). El costo es que el código vive pegado en el editor de Apps Script de la hoja, no en este repo desplegado — `apps-script/Code.gs` es la fuente de verdad para copiar/pegar y mantener versionado, no algo que se ejecute directo desde acá.
 
-ID `1ImBKT58KqTMcymS36OuX5yblesewgRD3s5wXEeU00HM` ("Déco Porteño"). Las respuestas del Form caen en su propia pestaña dentro del mismo archivo (columna Timestamp + una por cada pregunta del Form, en el orden en que se crearon):
+## Setup (una sola vez, ~10 minutos)
+
+### 1. Pegar el script
+
+1. Abrí el Sheet ("Déco Porteño", ID `1ImBKT58KqTMcymS36OuX5yblesewgRD3s5wXEeU00HM`).
+2. Extensiones → Apps Script.
+3. Borrá el contenido de `Code.gs` que viene por default y pegá el contenido de [`apps-script/Code.gs`](apps-script/Code.gs) de este repo.
+4. Guardar (ícono de disco o Ctrl/Cmd+S).
+
+### 2. Configurar credenciales
+
+En el editor de Apps Script: ⚙️ Configuración del proyecto → Propiedades del script → **Agregar propiedad del script**, una por una:
+
+| Propiedad | Valor |
+|-----------|-------|
+| `TELEGRAM_BOT_TOKEN` | Token de `@geermaanv_bot` (el que te dio @BotFather) |
+| `TELEGRAM_ALLOWED_CHAT_ID` | Tu chat ID de Telegram (evita que un desconocido le escriba al bot y te llene la hoja) |
+| `OPENROUTER_API_KEY` | API key de [openrouter.ai](https://openrouter.ai) |
+| `OPENROUTER_MODEL` | Un modelo con soporte de imagen de [openrouter.ai/models](https://openrouter.ai/models) (filtrar por input "image") — no pude confirmar el catálogo actual desde esta sesión, verificalo vos |
+
+### 3. Autorizar y activar
+
+1. Volvé a la hoja, recargala. Debería aparecer un menú **Déco Porteño** en la barra superior (lo agrega la función `onOpen`).
+2. Menú **Déco Porteño → Procesar ahora**. La primera vez Google va a pedir autorización — click en **Revisar permisos**, elegí tu cuenta, **Avanzado → Ir a (nombre del proyecto), no seguro** (es tu propio script, no un tercero), y **Permitir**. Esto es todo lo que reemplaza al Cloud Console/OAuth Client ID de las versiones anteriores.
+3. Menú **Déco Porteño → Crear fila de encabezados**.
+4. Menú **Déco Porteño → Instalar trigger automático (cada 10 min)**.
+
+Listo — de acá en más es mandarle fotos al bot y esperar.
+
+## Uso
+
+Mandale al bot todas las fotos de una puerta **como álbum** (seleccioná varias imágenes juntas antes de enviar) y escribí la dirección como **descripción** del álbum. Si mandás una sola foto, la descripción de esa foto es la dirección. El bot te contesta en el mismo chat cuando corre el trigger (cada 10 min).
+
+## Columnas del Sheet
 
 `Fecha | Dirección | Barrio | Lat | Long | Material | Estado | Motivo | Año edif. | Color/acabado | Herraje | Ref. herrería | Certeza | Notas | Origen`
 
-`Certeza` es un promedio simple de la certeza (alto/medio/bajo) que informa el análisis por campo; si hay varias fotos de la misma puerta, cada campo toma el valor con mayor certeza entre todas.
+`Certeza` es un promedio simple de la certeza (alto/medio/bajo) que informa el modelo por campo; si hay varias fotos, cada campo toma el valor con mayor certeza entre todas.
 
-## Si hace falta reconfigurar el Form
+## Notas técnicas
 
-El Form ya está creado y vinculado al Sheet. Si se pierde el mapeo de campos (`entry.NNNNNNN` de cada pregunta → nombre de columna) o se recrea el Form, hay que volver a sacarlo: abrir el Form en modo vista previa → menú de 3 puntos → "Obtener enlace con datos precargados" → completar cada campo con su propio nombre → copiar la URL generada. Esos IDs y la URL de envío (`.../formResponse`) no se commitean a este repo — viven solo en la conversación donde se usan, para no exponerlos en texto plano como quedó expuesto un token en `depto-bot`.
+- **Confirmación no es instantánea**: el bot contesta cuando corre el trigger (cada 10 min) o cuando ejecutás "Procesar ahora" a mano — no hay respuesta en el momento de mandar las fotos.
+- **Control de acceso**: solo se procesan mensajes de `TELEGRAM_ALLOWED_CHAT_ID`; cualquier otro mensaje al bot se ignora.
+- **Reprocesamiento**: si falla el análisis de un grupo de fotos, igual se confirma el update de Telegram (no vuelve a aparecer) — mirá **Ver → Registros de ejecución** en Apps Script si un mensaje no generó fila.
+- **Alerta de falla total**: si el pipeline entero revienta (credenciales vencidas, cuota agotada, etc.), manda un 🔴 a `TELEGRAM_ALLOWED_CHAT_ID`.
+- **Geocoding**: Nominatim tiene un límite de uso de 1 request/segundo y pide un User-Agent identificable (ya seteado en el código) — de sobra para este volumen.
+- **Calidad del modelo**: si ves errores de parseo en los logs, probá otro modelo en `OPENROUTER_MODEL` — no todos siguen instrucciones de JSON estricto igual de bien.
+- No pude probar el flujo completo en vivo (Telegram, OpenRouter, Nominatim) desde la sesión donde se escribió este código — esta sesión de Claude no tiene salida de red hacia esos dominios. Apps Script sí la tiene; probalo con una foto real después del setup y revisá los logs si algo no cierra.
