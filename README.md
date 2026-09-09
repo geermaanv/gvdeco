@@ -59,7 +59,9 @@ Mandale al bot todas las fotos de una puerta **como álbum** (seleccioná varias
 
 ## Columnas del Sheet
 
-`Timestamp | Fecha | Dirección | Barrio | Lat | Long | Material | Estado | Motivo | Año edif. | Color/acabado | Herraje | Ref. herrería | Certeza | Notas | Origen`
+`Timestamp | Fecha | Dirección | Barrio | Lat | Long | Material | Estado | Motivo | Año edif. | Color/acabado | Herraje | Ref. herrería | Certeza | Notas | Origen | Fotos`
+
+`Fotos` tiene un link por foto (una por línea dentro de la celda) a una copia guardada en la carpeta de Drive "Déco Porteño - fotos", creada automáticamente junto al Sheet la primera vez que corre.
 
 `Certeza` es un promedio simple de la certeza (alto/medio/bajo) que informa el modelo por campo; si hay varias fotos, cada campo toma el valor con mayor certeza entre todas.
 

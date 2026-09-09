@@ -14,7 +14,9 @@
  */
 
 var HEADER_ROW = ["Timestamp", "Fecha", "Dirección", "Barrio", "Lat", "Long", "Material", "Estado",
-  "Motivo", "Año edif.", "Color/acabado", "Herraje", "Ref. herrería", "Certeza", "Notas", "Origen"];
+  "Motivo", "Año edif.", "Color/acabado", "Herraje", "Ref. herrería", "Certeza", "Notas", "Origen", "Fotos"];
+
+var PHOTO_FOLDER_NAME = "Déco Porteño - fotos";
 
 var CERT_RANK = { alto: 3, medio: 2, bajo: 1 };
 
@@ -117,6 +119,23 @@ function ensureHeaderRow(sheet) {
   if (!first) sheet.getRange(1, 1, 1, HEADER_ROW.length).setValues([HEADER_ROW]);
 }
 
+// ---- fotos (Drive) ----
+
+function getPhotoFolder() {
+  var parents = DriveApp.getFileById(SpreadsheetApp.getActiveSpreadsheet().getId()).getParents();
+  var root = parents.hasNext() ? parents.next() : DriveApp.getRootFolder();
+  var existing = root.getFoldersByName(PHOTO_FOLDER_NAME);
+  return existing.hasNext() ? existing.next() : root.createFolder(PHOTO_FOLDER_NAME);
+}
+
+function savePhoto(folder, address, index, blob) {
+  var safeAddress = address.replace(/[\\/:*?"<>|]/g, "-").slice(0, 60);
+  var stamp = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "yyyy-MM-dd_HHmmss");
+  var filename = stamp + " " + safeAddress + " " + (index + 1) + ".jpg";
+  var file = folder.createFile(blob.setName(filename));
+  return file.getUrl();
+}
+
 // ---- pipeline principal ----
 
 function processAll() {
@@ -130,6 +149,8 @@ function processAll() {
     return;
   }
 
+  var photoFolder = getPhotoFolder();
+
   fetched.groups.forEach(function (group) {
     if (!group.address) {
       Logger.log("chat " + group.chatId + ": sin dirección, se omite");
@@ -138,10 +159,14 @@ function processAll() {
     }
 
     var analyses = [];
+    var photoUrls = [];
     group.fileIds.forEach(function (fileId) {
       var blob = downloadPhoto(cfg, fileId);
       var result = analyzeImage(cfg, blob);
-      if (result) analyses.push(resolveLowConfidenceFields(cfg, blob, result));
+      if (result) {
+        analyses.push(resolveLowConfidenceFields(cfg, blob, result));
+        photoUrls.push(savePhoto(photoFolder, group.address, photoUrls.length, blob));
+      }
     });
 
     if (!analyses.length) {
@@ -158,7 +183,7 @@ function processAll() {
       new Date(), fecha, group.address, geo.barrio, geo.lat, geo.lng,
       merged.material.valor, merged.estado.valor, merged.motivo.valor,
       merged.anio_edificio.valor, merged.color_acabado.valor, merged.herraje.valor,
-      merged.ref_herreria.valor, overallCertainty(merged), merged.notas, group.from
+      merged.ref_herreria.valor, overallCertainty(merged), merged.notas, group.from, photoUrls.join("\n")
     ]);
 
     sendMessage(cfg, group.chatId,
