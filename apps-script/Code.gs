@@ -11,10 +11,15 @@
  * Configuración: Extensiones → Apps Script → ⚙️ Configuración del proyecto
  * → Propiedades del script → agregar:
  *   TELEGRAM_BOT_TOKEN, TELEGRAM_ALLOWED_CHAT_ID, OPENROUTER_API_KEY, OPENROUTER_MODEL
+ * Opcional: DRIVE_FOLDER_ID (ID de una carpeta de Drive ya creada, para elegir
+ *   dónde se guardan las fotos). Si no se define, se usa/crea una carpeta
+ *   llamada "Fotos" en la misma carpeta de Drive donde está este Sheet.
  */
 
 var HEADER_ROW = ["Fecha", "Dirección", "Barrio", "Lat", "Long", "Material", "Estado",
-  "Motivo", "Año edif.", "Color/acabado", "Herraje", "Ref. herrería", "Certeza", "Notas", "Origen"];
+  "Motivo", "Año edif.", "Color/acabado", "Herraje", "Ref. herrería", "Certeza", "Notas", "Origen", "Fotos"];
+
+var DRIVE_FOLDER_NAME = "Fotos";
 
 var CERT_RANK = { alto: 3, medio: 2, bajo: 1 };
 
@@ -103,6 +108,19 @@ function getSheet() {
   return SpreadsheetApp.getActiveSpreadsheet().getSheets()[0];
 }
 
+function getPhotosFolder() {
+  var folderId = PropertiesService.getScriptProperties().getProperty("DRIVE_FOLDER_ID");
+  if (folderId) return DriveApp.getFolderById(folderId);
+
+  var sheetFile = DriveApp.getFileById(SpreadsheetApp.getActiveSpreadsheet().getId());
+  var parents = sheetFile.getParents();
+  var parent = parents.hasNext() ? parents.next() : DriveApp.getRootFolder();
+
+  var existing = parent.getFoldersByName(DRIVE_FOLDER_NAME);
+  if (existing.hasNext()) return existing.next();
+  return parent.createFolder(DRIVE_FOLDER_NAME);
+}
+
 function ensureHeaderRow(sheet) {
   var first = sheet.getRange(1, 1, 1, 1).getValue();
   if (!first) sheet.getRange(1, 1, 1, HEADER_ROW.length).setValues([HEADER_ROW]);
@@ -121,6 +139,8 @@ function processAll() {
     return;
   }
 
+  var photosFolder = getPhotosFolder();
+
   fetched.groups.forEach(function (group) {
     if (!group.address) {
       Logger.log("chat " + group.chatId + ": sin dirección, se omite");
@@ -129,10 +149,13 @@ function processAll() {
     }
 
     var analyses = [];
-    group.fileIds.forEach(function (fileId) {
+    var photoUrls = [];
+    group.fileIds.forEach(function (fileId, i) {
       var blob = downloadPhoto(cfg, fileId);
       var result = analyzeImage(cfg, blob);
       if (result) analyses.push(result);
+      var url = savePhotoToDrive(photosFolder, blob, group.address, group.date, i);
+      if (url) photoUrls.push(url);
     });
 
     if (!analyses.length) {
@@ -149,7 +172,8 @@ function processAll() {
       fecha, group.address, geo.barrio, geo.lat, geo.lng,
       merged.material.valor, merged.estado.valor, merged.motivo.valor,
       merged.anio_edificio.valor, merged.color_acabado.valor, merged.herraje.valor,
-      merged.ref_herreria.valor, overallCertainty(merged), merged.notas, group.from
+      merged.ref_herreria.valor, overallCertainty(merged), merged.notas, group.from,
+      photoUrls.join("\n")
     ]);
 
     sendMessage(cfg, group.chatId,
@@ -226,6 +250,20 @@ function downloadPhoto(cfg, fileId) {
   var url = "https://api.telegram.org/file/bot" + cfg.telegramToken + "/" + fileInfo.file_path;
   var res = UrlFetchApp.fetch(url, { muteHttpExceptions: true });
   return res.getBlob();
+}
+
+function savePhotoToDrive(folder, blob, address, date, index) {
+  try {
+    var safeAddress = address.replace(/[\\/:*?"<>|]/g, "-").slice(0, 80);
+    var stamp = Utilities.formatDate(new Date(date * 1000), Session.getScriptTimeZone(), "yyyy-MM-dd_HHmm");
+    var name = safeAddress + " - " + (index + 1) + " - " + stamp + ".jpg";
+    var file = folder.createFile(blob.setName(name));
+    file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+    return file.getUrl();
+  } catch (e) {
+    Logger.log("No se pudo guardar la foto en Drive: " + e.message);
+    return null;
+  }
 }
 
 function sendMessage(cfg, chatId, text) {
@@ -310,14 +348,41 @@ function overallCertainty(merged) {
 // ---- Geocoding (Nominatim / OpenStreetMap, sin API key) ----
 
 function geocodeAddress(address) {
+  var query = address + ", Ciudad Autónoma de Buenos Aires, Argentina";
   var url = "https://nominatim.openstreetmap.org/search?format=json&addressdetails=1&limit=1&q=" +
-    encodeURIComponent(address + ", Ciudad Autónoma de Buenos Aires, Argentina");
+    encodeURIComponent(query);
   var res = UrlFetchApp.fetch(url, {
     muteHttpExceptions: true,
-    headers: { "User-Agent": "gvdeco-relevamiento/1.0 (uso personal)" }
+    headers: {
+      "User-Agent": "gvdeco-relevamiento/1.0 (uso personal)",
+      "Referer": "https://github.com/geermaanv/gvdeco"
+    }
   });
-  var data = JSON.parse(res.getContentText());
-  if (!data.length) return { lat: "", lng: "", barrio: "" };
+
+  var code = res.getResponseCode();
+  var body = res.getContentText();
+  if (code !== 200) {
+    Logger.log("Nominatim HTTP " + code + " para «" + query + "»: " + body.slice(0, 300));
+    return { lat: "", lng: "", barrio: "" };
+  }
+
+  var data;
+  try {
+    data = JSON.parse(body);
+  } catch (e) {
+    Logger.log("Nominatim devolvió algo no-JSON para «" + query + "»: " + body.slice(0, 300));
+    return { lat: "", lng: "", barrio: "" };
+  }
+
+  if (!Array.isArray(data)) {
+    Logger.log("Nominatim devolvió un objeto (no array) para «" + query + "», probable bloqueo/rate-limit: " + body.slice(0, 300));
+    return { lat: "", lng: "", barrio: "" };
+  }
+
+  if (!data.length) {
+    Logger.log("Nominatim sin resultados para «" + query + "»");
+    return { lat: "", lng: "", barrio: "" };
+  }
 
   var addr = data[0].address || {};
   var barrio = addr.suburb || addr.neighbourhood || addr.city_district || addr.quarter || "";

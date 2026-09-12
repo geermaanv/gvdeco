@@ -13,7 +13,9 @@ Telegram (bot @geermaanv_bot: fotos + dirección como descripción)
         ↓
   Nominatim (OpenStreetMap) — geocodifica la dirección, sin API key
         ↓
-  Google Sheets — escribe la fila
+  Google Drive — guarda las fotos en la carpeta "Fotos" (junto al Sheet)
+        ↓
+  Google Sheets — escribe la fila (con los links a las fotos guardadas)
         ↓
   Telegram — el bot te contesta con la ficha creada (o el motivo si falló)
 ```
@@ -43,6 +45,7 @@ En el editor de Apps Script: ⚙️ Configuración del proyecto → Propiedades 
 | `TELEGRAM_ALLOWED_CHAT_ID` | Tu chat ID de Telegram (evita que un desconocido le escriba al bot y te llene la hoja) |
 | `OPENROUTER_API_KEY` | API key de [openrouter.ai](https://openrouter.ai) |
 | `OPENROUTER_MODEL` | Un modelo con soporte de imagen de [openrouter.ai/models](https://openrouter.ai/models) (filtrar por input "image") — no pude confirmar el catálogo actual desde esta sesión, verificalo vos |
+| `DRIVE_FOLDER_ID` (opcional) | ID de una carpeta de Drive ya creada por vos, si querés elegir dónde se guardan las fotos (el ID es la parte de la URL después de `/folders/`). Si no la definís, el script usa o crea sola una carpeta llamada **"Fotos"** en la misma carpeta de Drive donde está el Sheet. |
 
 ### 3. Autorizar y activar
 
@@ -59,9 +62,11 @@ Mandale al bot todas las fotos de una puerta **como álbum** (seleccioná varias
 
 ## Columnas del Sheet
 
-`Fecha | Dirección | Barrio | Lat | Long | Material | Estado | Motivo | Año edif. | Color/acabado | Herraje | Ref. herrería | Certeza | Notas | Origen`
+`Fecha | Dirección | Barrio | Lat | Long | Material | Estado | Motivo | Año edif. | Color/acabado | Herraje | Ref. herrería | Certeza | Notas | Origen | Fotos`
 
 `Certeza` es un promedio simple de la certeza (alto/medio/bajo) que informa el modelo por campo; si hay varias fotos, cada campo toma el valor con mayor certeza entre todas.
+
+`Fotos` tiene un link por foto (uno por línea dentro de la celda) a los archivos guardados en la carpeta de Drive **"Fotos"** — el script la crea sola, junto al Sheet, la primera vez que corre. Cada archivo se nombra como `Dirección - #foto - fecha_hora.jpg` y queda compartido como "cualquiera con el link puede ver".
 
 ## Notas técnicas
 
@@ -69,6 +74,6 @@ Mandale al bot todas las fotos de una puerta **como álbum** (seleccioná varias
 - **Control de acceso**: solo se procesan mensajes de `TELEGRAM_ALLOWED_CHAT_ID`; cualquier otro mensaje al bot se ignora.
 - **Reprocesamiento**: si falla el análisis de un grupo de fotos, igual se confirma el update de Telegram (no vuelve a aparecer) — mirá **Ver → Registros de ejecución** en Apps Script si un mensaje no generó fila.
 - **Alerta de falla total**: si el pipeline entero revienta (credenciales vencidas, cuota agotada, etc.), manda un 🔴 a `TELEGRAM_ALLOWED_CHAT_ID`.
-- **Geocoding**: Nominatim tiene un límite de uso de 1 request/segundo y pide un User-Agent identificable (ya seteado en el código) — de sobra para este volumen.
+- **Geocoding**: Nominatim tiene un límite de uso de 1 request/segundo y pide un User-Agent identificable (ya seteado en el código). Su política de uso (`operations.osmfoundation.org/policies/nominatim`) desalienta explícitamente el uso automatizado/periódico desde apps, y en la práctica puede bloquear o degradar requests que vienen de rangos de IP compartidos como los de Apps Script — si ves `Barrio`/`Lat`/`Long` vacíos en el Sheet, mirá **Ver → Registros de ejecución**: el código ahora loguea el código HTTP y el body cuando Nominatim no devuelve resultados, para poder confirmar si es bloqueo, rate-limit, o la dirección que no matchea. Si el bloqueo persiste, la alternativa es sumar una API key de un proveedor que sí permita uso automatizado (ej. LocationIQ, capa gratuita) en vez del endpoint público.
 - **Calidad del modelo**: si ves errores de parseo en los logs, probá otro modelo en `OPENROUTER_MODEL` — no todos siguen instrucciones de JSON estricto igual de bien.
 - No pude probar el flujo completo en vivo (Telegram, OpenRouter, Nominatim) desde la sesión donde se escribió este código — esta sesión de Claude no tiene salida de red hacia esos dominios. Apps Script sí la tiene; probalo con una foto real después del setup y revisá los logs si algo no cierra.
