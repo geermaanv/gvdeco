@@ -62,7 +62,9 @@ Mandale al bot todas las fotos de una puerta **como álbum** (seleccioná varias
 
 ## Columnas del Sheet
 
-`Fecha | Dirección | Barrio | Lat | Long | Material | Estado | Motivo | Año edif. | Color/acabado | Herraje | Ref. herrería | Certeza | Notas | Origen | Fotos`
+`Timestamp | Fecha | Dirección | Barrio | Lat | Long | Material | Estado | Motivo | Año edif. | Color/acabado | Herraje | Ref. herrería | Certeza | Notas | Origen | Fotos`
+
+`Timestamp` es el momento exacto en que se procesó la fila (a diferencia de `Fecha`, que es cuándo se mandaron las fotos por Telegram).
 
 `Certeza` es un promedio simple de la certeza (alto/medio/bajo) que informa el modelo por campo; si hay varias fotos, cada campo toma el valor con mayor certeza entre todas.
 

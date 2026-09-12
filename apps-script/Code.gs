@@ -16,7 +16,7 @@
  *   llamada "Fotos" en la misma carpeta de Drive donde está este Sheet.
  */
 
-var HEADER_ROW = ["Fecha", "Dirección", "Barrio", "Lat", "Long", "Material", "Estado",
+var HEADER_ROW = ["Timestamp", "Fecha", "Dirección", "Barrio", "Lat", "Long", "Material", "Estado",
   "Motivo", "Año edif.", "Color/acabado", "Herraje", "Ref. herrería", "Certeza", "Notas", "Origen", "Fotos"];
 
 var DRIVE_FOLDER_NAME = "Fotos";
@@ -169,7 +169,7 @@ function processAll() {
     var fecha = Utilities.formatDate(new Date(group.date * 1000), Session.getScriptTimeZone(), "yyyy-MM-dd");
 
     sheet.appendRow([
-      fecha, group.address, geo.barrio, geo.lat, geo.lng,
+      new Date(), fecha, group.address, geo.barrio, geo.lat, geo.lng,
       merged.material.valor, merged.estado.valor, merged.motivo.valor,
       merged.anio_edificio.valor, merged.color_acabado.valor, merged.herraje.valor,
       merged.ref_herreria.valor, overallCertainty(merged), merged.notas, group.from,
