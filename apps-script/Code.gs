@@ -13,13 +13,13 @@
  *   TELEGRAM_BOT_TOKEN, TELEGRAM_ALLOWED_CHAT_ID, OPENROUTER_API_KEY, OPENROUTER_MODEL
  * Opcional: DRIVE_FOLDER_ID (ID de una carpeta de Drive ya creada, para elegir
  *   dónde se guardan las fotos). Si no se define, se usa/crea una carpeta
- *   llamada "Déco Porteño - Fotos" en la raíz de Mi unidad.
+ *   llamada "Fotos" en la misma carpeta de Drive donde está este Sheet.
  */
 
 var HEADER_ROW = ["Fecha", "Dirección", "Barrio", "Lat", "Long", "Material", "Estado",
   "Motivo", "Año edif.", "Color/acabado", "Herraje", "Ref. herrería", "Certeza", "Notas", "Origen", "Fotos"];
 
-var DRIVE_FOLDER_NAME = "Déco Porteño - Fotos";
+var DRIVE_FOLDER_NAME = "Fotos";
 
 var CERT_RANK = { alto: 3, medio: 2, bajo: 1 };
 
@@ -112,9 +112,13 @@ function getPhotosFolder() {
   var folderId = PropertiesService.getScriptProperties().getProperty("DRIVE_FOLDER_ID");
   if (folderId) return DriveApp.getFolderById(folderId);
 
-  var existing = DriveApp.getFoldersByName(DRIVE_FOLDER_NAME);
+  var sheetFile = DriveApp.getFileById(SpreadsheetApp.getActiveSpreadsheet().getId());
+  var parents = sheetFile.getParents();
+  var parent = parents.hasNext() ? parents.next() : DriveApp.getRootFolder();
+
+  var existing = parent.getFoldersByName(DRIVE_FOLDER_NAME);
   if (existing.hasNext()) return existing.next();
-  return DriveApp.createFolder(DRIVE_FOLDER_NAME);
+  return parent.createFolder(DRIVE_FOLDER_NAME);
 }
 
 function ensureHeaderRow(sheet) {
@@ -250,9 +254,9 @@ function downloadPhoto(cfg, fileId) {
 
 function savePhotoToDrive(folder, blob, address, date, index) {
   try {
-    var stamp = Utilities.formatDate(new Date(date * 1000), Session.getScriptTimeZone(), "yyyy-MM-dd_HHmm");
     var safeAddress = address.replace(/[\\/:*?"<>|]/g, "-").slice(0, 80);
-    var name = stamp + " - " + safeAddress + " - " + (index + 1) + ".jpg";
+    var stamp = Utilities.formatDate(new Date(date * 1000), Session.getScriptTimeZone(), "yyyy-MM-dd_HHmm");
+    var name = safeAddress + " - " + (index + 1) + " - " + stamp + ".jpg";
     var file = folder.createFile(blob.setName(name));
     file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
     return file.getUrl();

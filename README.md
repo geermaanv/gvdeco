@@ -13,7 +13,7 @@ Telegram (bot @geermaanv_bot: fotos + dirección como descripción)
         ↓
   Nominatim (OpenStreetMap) — geocodifica la dirección, sin API key
         ↓
-  Google Drive — guarda las fotos en la carpeta "Déco Porteño - Fotos"
+  Google Drive — guarda las fotos en la carpeta "Fotos" (junto al Sheet)
         ↓
   Google Sheets — escribe la fila (con los links a las fotos guardadas)
         ↓
@@ -45,7 +45,7 @@ En el editor de Apps Script: ⚙️ Configuración del proyecto → Propiedades 
 | `TELEGRAM_ALLOWED_CHAT_ID` | Tu chat ID de Telegram (evita que un desconocido le escriba al bot y te llene la hoja) |
 | `OPENROUTER_API_KEY` | API key de [openrouter.ai](https://openrouter.ai) |
 | `OPENROUTER_MODEL` | Un modelo con soporte de imagen de [openrouter.ai/models](https://openrouter.ai/models) (filtrar por input "image") — no pude confirmar el catálogo actual desde esta sesión, verificalo vos |
-| `DRIVE_FOLDER_ID` (opcional) | ID de una carpeta de Drive ya creada por vos, si querés elegir dónde se guardan las fotos (el ID es la parte de la URL después de `/folders/`). Si no la definís, el script usa o crea sola una carpeta llamada **"Déco Porteño - Fotos"** en la raíz de tu Drive. |
+| `DRIVE_FOLDER_ID` (opcional) | ID de una carpeta de Drive ya creada por vos, si querés elegir dónde se guardan las fotos (el ID es la parte de la URL después de `/folders/`). Si no la definís, el script usa o crea sola una carpeta llamada **"Fotos"** en la misma carpeta de Drive donde está el Sheet. |
 
 ### 3. Autorizar y activar
 
@@ -66,7 +66,7 @@ Mandale al bot todas las fotos de una puerta **como álbum** (seleccioná varias
 
 `Certeza` es un promedio simple de la certeza (alto/medio/bajo) que informa el modelo por campo; si hay varias fotos, cada campo toma el valor con mayor certeza entre todas.
 
-`Fotos` tiene un link por foto (uno por línea dentro de la celda) a los archivos guardados en la carpeta de Drive **"Déco Porteño - Fotos"** — el script la crea sola la primera vez que corre. Cada archivo queda compartido como "cualquiera con el link puede ver".
+`Fotos` tiene un link por foto (uno por línea dentro de la celda) a los archivos guardados en la carpeta de Drive **"Fotos"** — el script la crea sola, junto al Sheet, la primera vez que corre. Cada archivo se nombra como `Dirección - #foto - fecha_hora.jpg` y queda compartido como "cualquiera con el link puede ver".
 
 ## Notas técnicas
 
