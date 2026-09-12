@@ -348,14 +348,41 @@ function overallCertainty(merged) {
 // ---- Geocoding (Nominatim / OpenStreetMap, sin API key) ----
 
 function geocodeAddress(address) {
+  var query = address + ", Ciudad Autónoma de Buenos Aires, Argentina";
   var url = "https://nominatim.openstreetmap.org/search?format=json&addressdetails=1&limit=1&q=" +
-    encodeURIComponent(address + ", Ciudad Autónoma de Buenos Aires, Argentina");
+    encodeURIComponent(query);
   var res = UrlFetchApp.fetch(url, {
     muteHttpExceptions: true,
-    headers: { "User-Agent": "gvdeco-relevamiento/1.0 (uso personal)" }
+    headers: {
+      "User-Agent": "gvdeco-relevamiento/1.0 (uso personal)",
+      "Referer": "https://github.com/geermaanv/gvdeco"
+    }
   });
-  var data = JSON.parse(res.getContentText());
-  if (!data.length) return { lat: "", lng: "", barrio: "" };
+
+  var code = res.getResponseCode();
+  var body = res.getContentText();
+  if (code !== 200) {
+    Logger.log("Nominatim HTTP " + code + " para «" + query + "»: " + body.slice(0, 300));
+    return { lat: "", lng: "", barrio: "" };
+  }
+
+  var data;
+  try {
+    data = JSON.parse(body);
+  } catch (e) {
+    Logger.log("Nominatim devolvió algo no-JSON para «" + query + "»: " + body.slice(0, 300));
+    return { lat: "", lng: "", barrio: "" };
+  }
+
+  if (!Array.isArray(data)) {
+    Logger.log("Nominatim devolvió un objeto (no array) para «" + query + "», probable bloqueo/rate-limit: " + body.slice(0, 300));
+    return { lat: "", lng: "", barrio: "" };
+  }
+
+  if (!data.length) {
+    Logger.log("Nominatim sin resultados para «" + query + "»");
+    return { lat: "", lng: "", barrio: "" };
+  }
 
   var addr = data[0].address || {};
   var barrio = addr.suburb || addr.neighbourhood || addr.city_district || addr.quarter || "";
